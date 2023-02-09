@@ -1,0 +1,2448 @@
+/* Author Senthilkumar Peelikkampatti
+  Date 18-Aug-2011
+*/
+
+//Namespace
+mocdoc = {};
+mocdoc.ajax = true;
+mocdoc.history = true;
+//Error namespace
+mocdoc.error={};
+//Page namespace
+mocdoc.pages={};
+mocdoc.dataTable = {};
+mocdoc.util={};
+
+mocdoc.util.unique = function(list) {
+    var result = [];
+    $.each(list, function(i, e) {
+      if ($.inArray(e, result) == -1) result.push(e);
+    });
+    return result;
+  }
+// This contents are reffered from the following url
+// http://patisserie.keensoftware.com/en/pages/remove-word-formatting-from-rich-text-editor-with-javascript
+// and implementation is in the following url
+// https://github.com/summernote/summernote/issues/303
+// removes MS Office generated guff
+function CleanPastedHTML(input) {
+  // 1. remove line breaks / Mso classes
+  var stringStripper = /(\n|\r| class=(")?Mso[a-zA-Z]+(")?)/g;
+  var output = input.replace(stringStripper, ' ');
+  // 2. strip Word generated HTML comments
+  var commentSripper = new RegExp('<!--(.*?)-->','g');
+  var output = output.replace(commentSripper, '');
+  var tagStripper = new RegExp('<(/)*(meta|link|span|\\?xml:|st1:|o:|font)(.*?)>','gi');
+  // 3. remove tags leave content if any
+  output = output.replace(tagStripper, '');
+  // 4. Remove everything in between and including tags '<style(.)style(.)>'
+  var badTags = ['style', 'script','applet','embed','noframes','noscript'];
+
+  for (var i=0; i< badTags.length; i++) {
+    tagStripper = new RegExp('<'+badTags[i]+'.*?'+badTags[i]+'(.*?)>', 'gi');
+    output = output.replace(tagStripper, '');
+  }
+  // 5. remove attributes ' style="..."'
+  var badAttributes = ['style', 'start'];
+  for (var i=0; i< badAttributes.length; i++) {
+    var attributeStripper = new RegExp(' ' + badAttributes[i] + '="(.*?)"','gi');
+    output = output.replace(attributeStripper, '');
+  }
+  console.log("called html cleaning");
+ // 6. remove p tag and replace with span
+  output = output.replaceAll("<p","<div");
+  output = output.replaceAll("</p>","</div>");
+  return output;
+}
+
+function unselectRadio(e, sel){
+  if(e.shiftKey == true){
+      sel.prop('checked', false);
+    }
+}
+
+function slugify(str) {
+    if (str == null){
+        return "";
+    }else{
+        return str
+                .toLowerCase()
+                .trim()
+                .replace(/[^\w\s]/g, '')
+                .replace(/[\s-]+/g, '-')
+                .replace(/^-+|-+$/g, '');
+    }
+}
+
+function filterSupplier(id, selectid, splist, entitylocation){
+    var sp = $("#"+id).html();
+    var options = $(sp).filter(function() { 
+        var spref = $(this).data("spref");
+        if(typeof spref != 'undefined'){
+        var slist = splist[spref]; 
+        var allowloclist = slist.allowedlocations;
+            if(allowloclist != 'undefined' && allowloclist != undefined){
+                return allowloclist.includes(entitylocation);
+            }else{
+                return sp;
+            }
+        }   
+    });   
+    return $("#"+selectid).html(options);
+}
+
+function check_test_presence(key, status, type, labProfileTest, Packages, entityKey, callback){
+        var testPresent = "false";
+        var profVal = [];
+        var pkgVal = [];
+        
+        if(status != "active"){ 
+            if(type == "test" || type == "profile"){ 
+                        $.each(labProfileTest, function (i, o){
+                            var prfcode = o.code == "undefined" ? "" : o.code;
+                            var services = o.services || [];
+                            $.each(services, function(index, value){
+                                  if(key == value.key && value.type == type){
+                                           profVal.push(prfcode);
+                                           testPresent = "true";
+                                  }                               
+                            });
+                        });     
+                        $.each(Packages, function(i, v){
+                            var pkgcode = v.pkgcode == "undefined" ? "" : v.pkgcode;
+                            var services = v.services || [];
+                            $.each(services, function(index, value){
+                              if(key == value.id && value.type == type){
+                                       pkgVal.push(pkgcode);
+                                       testPresent = "true";                       
+                              }         
+                            });
+                        });
+            }
+            
+    }
+    callback(testPresent, profVal, pkgVal);
+}
+
+function check_master_sync(entityKey, callback){
+        // ----------- Checking If Master is out of sync ----------------- //
+        $.get("/masters/version/"+entityKey+"?"+Math.random(), function(res){
+            var remoteversion = JSON.parse(res);
+            var server_rpversion = remoteversion.rateplan;
+            var server_ptypeversion = remoteversion.paymenttypes;
+            var server_creditversion = remoteversion.creditmaster;
+            mocdoc.masters.fun.fetch_version(entityKey, function(localversion){
+                var local_rpversion = localversion.rateplan;
+                var local_ptypeversion = localversion.paymenttypes;
+                var local_creditversion = localversion.creditmaster;       
+                if(server_rpversion != local_rpversion || server_ptypeversion != local_ptypeversion ||  server_creditversion != local_creditversion){
+                    var url = "/masters/sync/status/"+entityKey;
+                    $.get( url,function(res){ 
+                    $("#fulloverlay .md-overlay-content").html(res);
+                    $("body").addClass("md-overlay-open");
+                    $("#fulloverlay .md-overlay-header").css("position","fixed");
+                    $("#fulloverlay").css("height","100%");
+                    });
+                    var isSync = "false";
+                }
+                    callback(isSync);
+            })
+        })
+    }
+
+function validateMultiModePayment(obj, $this) {
+    var multimode = $(obj.parentId + " input[name='multimode-payment']:checked").val();
+    if (multimode == "true"){
+        if ((parseFloat($(obj.parentId + " #amount1").val())||0) == 0 || (parseFloat($(obj.parentId + " #amount2").val())||0) == 0){
+            alert("Split amount cannot have zero, please use single payment");
+            $this.button('reset');
+            return false;
+        }
+        if ( (parseFloat($(obj.parentId + " #amount1").val()) + parseFloat($(obj.parentId + " #amount2").val())) != 
+                obj.amtRcvd){
+            alert("Amount split is not matching amount received");
+            $this.button('reset');
+            return false;   
+        } 
+        if($(obj.parentId + " #paymenttype1").val() == $(obj.parentId + " #paymenttype2").val()){
+            alert("Multimode payment cannot have same payment types. Please change it.");
+            $this.button('reset');
+            return false;
+        }
+    }   
+    return true;
+}
+
+function validate_password(password){
+  var PwdPattern = /^(?:(?=.*?[A-Z])(?:(?=.*?[0-9])(?=.*?[-!@#$%^&*()_[\]{},.<>+=])|(?=.*?[a-z])(?:(?=.*?[0-9])|(?=.*?[-!@#$%^&*()_[\]{},.<>+=])))|(?=.*?[a-z])(?=.*?[0-9])(?=.*?[-!@#$%^&*()_[\]{},.<>+=]))[A-Za-z0-9!@#$%^&*()_[\]{},.<>+=-]{8,50}$/;
+  var IsValid = PwdPattern.test(password);
+  return IsValid;
+}
+
+function is_history_enabled(){
+  return (mocdoc.history == true) && (History && History.enabled == true)
+}
+
+function md_click_handler(elem){
+    $t = elem;
+    var hasClass = $t.hasClass("clicked");
+    if (!hasClass){
+      $t.addClass("clicked");
+      $t.data("timestamp", new Date().getTime());
+
+      setTimeout(function(){
+        $t.removeClass("clicked");
+      }, 2000);
+      
+    } else {
+      var old = $t.data("timestamp");
+      var diff = (new Date().getTime() - old)/1000;
+      if (diff > 2){
+        $t.removeClass("clicked");
+        hasClass = false;
+      }
+    }
+    return hasClass;
+}
+
+/*
+ *    This is to Ajaxify the links and link would be added like
+ *         <a href="http://URL" data-location-id="log" data-context-id="body"> Test </a> 
+ *         <a href="2" data-location-class="log" data-context-class="loglocation"> </a>
+ *    data-location-[id | class] can be used to tell where the resultant html is replaced
+ *    data-context-[id | class] can be used to tell what the data-location-* parent container
+ */
+(function ms_ajaxify(){
+        var fetch_content_no_his = function (href, target) {
+        var isSameURL = History.getRootUrl()+href.substring(1) + "/";
+         if ( is_history_enabled() && History.getPageUrl() != isSameURL) {
+                 History.pushState({'target_id': target.selector}, "", href);
+           }else{
+                 $.ajax({ 
+                     type: "GET", 
+                     url: href, 
+                     cache: false, 
+                     success: function(data){
+                             target.html(data);
+                             window.scrollTo(0,0);
+                     }
+             });    
+           }
+        };
+        var ms_ajax_manager_no_his = function (event) {
+            event.preventDefault();            
+              $("#home-extra").remove();
+              var selector = "data-md-target";
+                var selectorName = $(this).attr(selector);
+                var target;
+                if(selectorName) {
+                        target = $(selectorName);
+                }else{
+                        target = $("#cbody");
+                }
+                var href = $(this).attr("href");
+                var content = fetch_content_no_his(href, target);
+        };      
+        $(document).ready(function(){
+                $(document).on('click', ".ms-ajax", ms_ajax_manager_no_his);
+        });
+})();
+
+
+email_sent_notify = function(entity, location, $this) {
+  mocdoc.masters.fun.entity_loc_tz_dateformat(entity, location, function (tz1, dt_format1, time_format1){
+    tz = tz1;
+    dt_format = dt_format1;
+    time_format = time_format1;
+        var dt = $.trim($this.data("date"));
+        if (dt != ""){
+          var dt1 = mocdoc.cal.ist_to_local_datetime_byformat(tz, dt, dt_format, time_format);
+          $this.attr("data-original-title", "Emailed at " + dt1);   
+        }
+  });
+};
+
+sms_sent_notify = function(entity, location, $this) {
+  mocdoc.masters.fun.entity_loc_tz_dateformat(entity, location, function (tz1, dt_format1, time_format1){
+    tz = tz1;
+    dt_format = dt_format1;
+    time_format = time_format1;
+        var dt = $.trim($this.data("date"));
+        if (dt != ""){
+          var dt1 = mocdoc.cal.ist_to_local_datetime_byformat(tz, dt, dt_format, time_format);
+          $this.attr("data-original-title", "SMS sent at " + dt1);   
+        }
+  });
+};
+
+fetch_content = function (href, target) {
+    $.ajax({
+        type: "GET",
+        url: href,
+        cache: false,
+        success: function(data){
+            target.html(data);
+        }
+    });
+};
+ms_ajax_manager = function (href) {
+    var target = $("#cbody");
+    var content = fetch_content(href, target);
+    return false;
+};
+
+(function ms_history(){
+  if(mocdoc.history){
+     History = window.History;
+       if ( is_history_enabled() ) {
+       $(window).bind("statechange", function(){ 
+          var State = History.getState();
+          var sel = $(State.data.target_id).length == 0 ? "#cbody" : $(State.data.target_id);
+                   $.ajax({ 
+                       type: "GET", 
+                       url: State.url, 
+                       cache: false, 
+                       success: function(data){
+                               $(sel).html(data);
+                       }
+                   });   
+        });
+     }else{
+       return false;
+     }
+  }
+})();
+
+mocdoc.pages.history_req = function(url, target){
+    var isSameURL = History.getRootUrl()+url.substring(1) + "/";
+   if ( is_history_enabled() && History.getPageUrl() != isSameURL) {
+         History.pushState({'target_id': target.selector}, "", url);
+   }else{
+         $.ajax({ 
+             type: "GET", 
+             url: url, 
+             cache: false, 
+             success: function(data){
+                     target.html(data);
+             }
+     });    
+   }    
+}
+
+mocdoc.dataTable.setDataTableFilters = function (id, emptyList){
+  
+  var fun = function(settings, data, dataIndex ) {
+      if(settings.sTableId != id)
+      return true;
+
+      tr = $("#"+id).dataTable().fnGetNodes()[dataIndex];
+      res = true;
+      $.each(dTFilters, function(k,v){
+        if(emptyList.indexOf(k) == -1){     
+          
+          if($(tr).hasClass(v) == false){
+            res = false;
+            return false;
+          }
+        }
+        else{
+          if(v != ""){
+            if($(tr).hasClass(v) == false){
+              res = false;
+              return false;
+            }
+          }          
+        }       
+      });
+      return res;
+
+    }
+    return fun;
+};
+
+function filterUser_stockbill(){
+    var storekey = $("#storekey").val();
+    var usershtml = $("#billed_user_hidden").html();
+    var useroptions = $(usershtml).filter(function() { 
+              var sel = $(this);
+              var user = sel.val();
+              var stores = $(this).data("store");
+              if(stores == "undefined" || stores == undefined || stores == "" || stores == "All"){
+                var storesArray = [];
+              }else{
+                var storesArray = stores.split(",");
+              } 
+              if(user == "" || $.inArray(storekey, storesArray) > -1 || stores == "All"){
+                return $(this);
+              }
+            });
+    $("#billed_user").html(useroptions);
+}
+
+mocdoc.pages.custombutton = function () {
+        $("input[type=submit]").mouseover(function(){
+                $(this).addClass("ui-state-hover");
+        }).mouseout(function(){
+                        $(this).removeClass("ui-state-hover");
+        });
+        $("input[type=submit]").addClass("ui-priority-primary ui-corner-all");
+}
+
+mocdoc.pages.notify= function (msg) {
+        jQuery.noticeAdd({
+        text: msg,
+        inEffectDuration: 500,
+        stayTime: 2000
+        });
+};
+mocdoc.pages.notify.error= function (msg) {
+    jQuery.noticeAdd({
+    text: msg,
+    inEffectDuration: 500,
+    stayTime: 3000,
+    type: 'error'
+    });
+};
+mocdoc.pages.welcome_msg = function (msg) {
+        $(".welcome").html(msg);
+}
+
+//This is Generic Java script Error handler, it understands the JSON formatted error message {id:FormId, msg:Error Message}
+//In order for this to work, validator should be set up in the init method
+mocdoc.error.postback_error = function (resp, status, errorM){
+  if(errorM == "abort"){
+    return;
+  }else if(resp.responseText == "In Progress"){
+    alert("This bill is being used by another user, kindly try again later!")
+  }else{
+    try{
+      error= $.parseJSON(resp.responseText);
+      var id = '#'+ error.id;
+      id = $.trim(id);
+      $("label.error", $(id).parent()).remove();
+      $("<label class='error'>"+ error.msg +"</label>").insertBefore($(id));
+          $(id).click(function(){
+            $("label.error", $(id).parent()).remove();
+          });
+    }catch(e){
+      //alert ( resp.responseText);
+      // if($.isEmptyObject(resp.responseText) == false){
+      //   alert ( resp.responseText);
+      // }else{
+      alert("There was an error. Please try after sometime.");
+      // }
+    }
+  }
+}
+mocdoc.error.notify_error = function (resp, status, errorM){
+  try{
+    mocdoc.pages.notify(resp.responseText);
+  }catch(e){
+  }
+}
+
+mocdoc.error.fail = function (domId, errorMsg){
+        showError = {};
+        showError[domId] =  errorMsg;
+        validator.showErrors(showError); 
+}
+
+mocdoc.pages.userindexpage ={};
+
+mocdoc.pages.userindexpage.init= function () {
+        $("#search1").click(function(event){
+                event.preventDefault();
+                var dataString = $("#searchid").serialize();
+                var url= "/search/search";
+                $.ajax({
+                          url: url,
+                          data: dataString,
+                          success:  function(data){
+                                                $("#ms_content").html(data);
+                          }
+                        });
+
+                return false;            
+        });             
+};
+
+mocdoc.pages.shareit = function () {
+    function prepare_share () {
+          $(".s-icon", ".shareit").click (function () {
+               var url1 = $("a", this).attr("href");
+               var parts = url1.split("/" );
+               var item= parts[parts.length -2];       
+               persist_shareinfo( $("a", this).text(), item);
+               if($("a", this).text() == "Email") {
+                   return false;
+               }
+               window.location = url1;
+               return false;
+           });
+          $(".s-icon", ".shareit").mouseover(function(){
+               $(this).addClass("s-icon-hover");
+               $(this).css("cursor", "pointer");
+               
+           }).mouseout(function(){
+                   $(this).removeClass("s-icon-hover");
+           });
+        }
+
+   function persist_shareinfo (whereshare, itemref) {
+            var datastring = "which=" + whereshare + "&item=" + itemref;
+               $.ajax({
+                   type: "POST",
+                   url: "/shareit/social",
+                   dataType: "text",
+                   data: datastring,
+                   async: true,                    
+                   success: function(resp) {},
+                   error: function(resp) {}
+               });
+               return false;   
+   }
+//Executing the code
+   prepare_share();
+
+}
+
+mocdoc.pages.cartview = {};
+mocdoc.pages.cartview.init = function (priceqty) {
+        mocdoc.pages.custombutton();
+        $('#rating > input[type=radio]').rating().rating('disable');
+        
+        validator = $("#addtocartform").validate();
+
+        $("#addtocartform").submit(function () {
+                var qty = $("#orderqty").val();
+                var sizeis = $("input:checked", "#addtocartform").val();
+                var minqty = priceqtyjs[sizeis].minqty;
+                qty = jQuery.trim(qty);
+                if (qty < minqty) {
+                        mocdoc.error.fail("orderqty", "Invalid quantity"); 
+                        return false;
+                }
+                var urltobe = $(this).attr("action");
+                $.ajax({
+                        type: "POST",
+                        url: urltobe,
+                        data: $(this).serialize(),
+                        dataType: "text",
+                        async: true,                            
+                        success: function(resp) {
+                                var result = "(" + resp + ")";
+                                result = eval(result);
+                                mocdoc.pages.updatecartitemscount(result.count);
+                                //$(".status").html(result.msg);
+                                mocdoc.pages.notify(result.msg);
+                        },
+                        error: mocdoc.error.postback_error
+
+                        });                     
+                return false;
+        });
+        
+
+};
+
+mocdoc.pages.image_maxmize = function (jqImgObj) {
+        $(jqImgObj).each (function () {
+                var Href = $(this).attr("href");
+                Href = Href.replace("thumb_", "normal_");
+                $(this).attr("href", Href);
+              
+        });
+
+        $(jqImgObj).fancybox(
+                {
+                zoomSpeedIn                     : 0,
+                zoomSpeedOut            : 0,
+                autoScale                       :       true,
+                autoDimensions          :       true,
+                width                   :       500,
+                height                  :       550
+                }
+                );
+        
+        $(".img-disp").click ( function () {
+                var Href = $(this).attr("src");
+                Href = Href.replace("thumb_", "normal_");
+                $(this).parent().attr("href", Href).click();
+                return false;
+        });     
+}
+
+mocdoc.cal = {};
+
+mocdoc.cal.format_handler = function(){
+  var dt = $.trim($(this).text());
+  if(dt.length >= 8  ){
+    dt = mocdoc.cal.formatYYYYMMDD_to_MM_DD_YYYY_HR_Min(dt, "/");
+    $(this).text(dt);
+  }
+}
+
+mocdoc.cal.format_handler_val = function(){
+  var dt = $.trim($(this).val());
+  if(dt.length >= 8  ){
+    dt = mocdoc.cal.formatYYYYMMDD_to_MM_DD_YYYY_HR_Min(dt, "/");
+    $(this).val(dt);
+  }
+}
+
+mocdoc.cal.today = function(entity, location, callback){
+  mocdoc.masters.fun.entity_loc_tz_dateformat(entity, location, function (tz, dt_format, time_format){
+    var today = moment().tz(tz).format("YYYYMMDD");
+    callback(today);
+  })
+}
+
+mocdoc.cal.ist_to_local_date = function(entity, location, date, callback){
+  mocdoc.masters.fun.entity_loc_tz_dateformat(entity, location, function (tz, dt_format, time_format){
+    //check if the input date is of given format.
+    //If the date is not in the given format, no timezone conversion is required, just change the format
+    var val = mocdoc.cal.ist_to_local_date_byformat(tz, date, dt_format);
+    //console.log("DateFormated", val)
+    callback(val, tz, dt_format)
+  })
+}
+
+mocdoc.cal.ist_to_local_date_byformat = function(tz, date, dt_format){
+  var aDate   = moment(date, "YYYYMMDDHH:mm:ss", true);
+  var bDate = moment(date, "YYYYMMDD", true);
+  var cDate   = moment(date, "YYYYMMDDHH:mm", true);
+  if (aDate.isValid()){
+    var val = mocdoc.tz.from_ist_to_tz_date(tz, date, "YYYYMMDDHH:mm:ss", dt_format);
+  } else if (cDate.isValid()){
+    var val = mocdoc.tz.from_ist_to_tz_date(tz, date+":00", "YYYYMMDDHH:mm:ss", dt_format);   
+  } else if (bDate.isValid()){
+    var val = moment(date).format(dt_format);
+  } else {
+    var val = date;
+  }
+  return val;
+}
+
+mocdoc.cal.ist_to_local_datetime = function(entity, location, date, callback){
+  mocdoc.masters.fun.entity_loc_tz_dateformat(entity, location, function (tz, dt_format, time_format){
+    //check if the input date is of given format.
+    //If the date is not in the given format, no timezone conversion is required, just change the format
+    var val = mocdoc.cal.ist_to_local_datetime_byformat(tz, date, dt_format, time_format);
+    //console.log("DateFormated", val)
+    callback(val, tz, dt_format)
+  })
+}
+
+mocdoc.cal.ist_to_local_datetime_byformat = function(tz, date, dt_format, time_format){
+  if (date.length > 16){
+    date = date.substring(0, 16);
+  }
+  var aDate = moment(date, "YYYYMMDDHH:mm:ss", true);
+  var bDate =  moment(date, "YYYYMMDD", true);
+  var cDate   = moment(date, "YYYYMMDDHH:mm", true);
+  if (aDate.isValid()){
+    if (time_format == "12"){
+      var val = mocdoc.tz.from_ist_to_tz_date(tz, date, "YYYYMMDDHH:mm:ss", dt_format + " hh:mm A");
+    } else {
+      var val = mocdoc.tz.from_ist_to_tz_date(tz, date, "YYYYMMDDHH:mm:ss", dt_format + " HH:mm");
+    }
+  } else if (cDate.isValid()){
+    date1 = date + ":00";
+    if (time_format == "12"){
+      var val = mocdoc.tz.from_ist_to_tz_date(tz, date1, "YYYYMMDDHH:mm:ss", dt_format + " hh:mm A");
+    } else {
+      var val = mocdoc.tz.from_ist_to_tz_date(tz, date1, "YYYYMMDDHH:mm:ss", dt_format + " HH:mm");
+    }   
+  } else if (bDate.isValid()){
+    var date1 = date + "23:59:59";
+    if (time_format == "12"){
+      var val = mocdoc.tz.from_ist_to_tz_date(tz, date1, "YYYYMMDDHH:mm:ss", dt_format + " hh:mm A");
+    } else {
+      var val = mocdoc.tz.from_ist_to_tz_date(tz, date1, "YYYYMMDDHH:mm:ss", dt_format + " HH:mm");
+    }   
+  } else {
+    var val = date;
+  }
+  return val;
+}
+
+mocdoc.cal.local_to_ist_datetime = function(entity, location, date, callback){
+  mocdoc.masters.fun.entity_loc_tz_dateformat(entity, location, function (tz, dt_format, time_format){
+    //check if the input date is of given format.
+    //If the date is not in the given format, no timezone conversion is required, just change the format
+    var val = mocdoc.tz.from_tz_date_to_ist(tz, date, dt_format + " HH:mm:ss", "YYYYMMDDHH:mm:ss");
+    //console.log("DateFormated", val)
+    callback(val, tz, dt_format)
+  })
+}
+
+mocdoc.cal.local_to_ist_datetime_byformat = function(tz, date, dt_format){
+  return mocdoc.tz.from_tz_date_to_ist(tz, date, dt_format + " HH:mm:ss", "YYYYMMDDHH:mm:ss");
+}
+
+mocdoc.cal.convert_to_format = function(dt, informat, outformat){
+  if(dt == "" || dt == undefined || dt == "undefined"){
+    dt = ""
+    return dt;
+  }else{
+   return moment(dt, informat).format(outformat);
+  } 
+}
+
+
+mocdoc.price = {};
+
+mocdoc.price.format_handler = function (){
+  var val = $.trim($(this).text());
+  if (isNaN(val) != true && val != ""){
+    $(this).text(parseFloat(val).toFixed(2));
+  }
+}
+
+mocdoc.price.format_handler_val = function (){
+  var val = $.trim($(this).val());
+  if (val != ""){
+    $(this).val(parseFloat(val).toFixed(2));  
+  }
+}
+
+mocdoc.price.format_handler_singleval = function (val){
+  val = $.trim(val);
+  return parseFloat(val).toFixed(2);  
+}
+
+mocdoc.price.format_handler_singleval_fourdecimal = function (val){
+  val = $.trim(val);
+  return parseFloat(val).toFixed(4);  
+}
+
+mocdoc.cal.hrs24_to_min_with_added_value = function (hrs24, addVal){
+  hrs24 = $.trim(hrs24);
+  if(hrs24 != ""){
+    var hrs12 = hrs24.split(":");
+    var hr = parseInt(hrs12[0], 10);
+    var min = parseInt(hrs12[1], 10);
+    var totalmin = (hr * 60) + min + parseInt(addVal, 10)
+    hr = Math.floor(totalmin/60);
+    min = totalmin % 60;
+    var ampm = hr > 11 ? " PM": " AM";
+    hr = (hr > 12) ? (hr - 12) : hr; 
+    hr = (hr > 9) ? hr : "0" + hr;
+    min = (min > 9) ? min : "0" + min;
+    hrs12 = hr + ":" + min + ampm;
+    return hrs12;
+  }else{
+    return "";
+  }
+} 
+mocdoc.cal.hrs24_to_12_format = function (hrs24){
+  hrs24 = $.trim(hrs24);
+  if(hrs24 != ""){
+    var hrs12 = hrs24.split(":");
+    var hr = parseInt(hrs12[0], 10);
+    var ampm = hr > 11 ? " PM": " AM";
+    hr = (hr > 12) ? (hr - 12) : hr; 
+    hr = (hr > 9) ? hr : "0" + hr;
+    hrs12 = hr + ":" + hrs12[1] + ampm;
+    return hrs12;
+  }else{
+    return "";
+  }
+}
+mocdoc.cal.hrs12_to_24_format = function (fieldtimeval){
+
+      var x = fieldtimeval.indexOf("PM");
+      var y = fieldtimeval.indexOf("AM");
+      if(x == "-1" && y == "-1"){
+          var time_Finalval = fieldtimeval;
+      }
+      else{
+           if(y == "6"){
+              var res = fieldtimeval.slice(0, 5);
+              var res1 = fieldtimeval.slice(0, 2);
+              var res2 = fieldtimeval.slice(2, 5);
+              if(res1 == "12"){
+                res1 = "00";
+                var time_Finalval = res1.concat(res2);
+              }
+              else{
+                var time_Finalval = res;
+              }
+           }else{
+              var fieldtimeval_Hrs = fieldtimeval.slice(0, 2);
+              if(fieldtimeval_Hrs == "12"){
+                var time_Finalval = fieldtimeval.slice(0, 5);
+              }
+              else{
+                fieldtimeval_Hrs = parseInt(fieldtimeval_Hrs)  + 12;
+                fieldtimeval_Hrs = fieldtimeval_Hrs.toString();
+                var fieldtimeval_Mins = fieldtimeval.slice(2, 5);
+                var res = fieldtimeval_Hrs.concat(fieldtimeval_Mins);
+                var time_Finalval = res;
+              }
+              
+           }
+      }
+      return time_Finalval;
+}
+mocdoc.cal.daynum_to_datename = function (num){
+  var dated = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
+  return dated[num];
+}
+
+mocdoc.cal.formatDDMMYYYY = function (dateObj, seperator){
+  var mon = dateObj.getMonth()+1;
+  mon = mon<10 ? "0" +  mon : mon;
+  var dt = dateObj.getDate();
+  dt = dt<10 ? "0" +  dt : dt;
+  seperator = seperator ? seperator : "-";
+  return dt + seperator + mon + seperator + dateObj.getFullYear();
+}
+mocdoc.cal.formatYYYYMMDD_to_MM_DD_YYYY_HR_Min = function (YYYYMMDDString, seperator){
+  if(!YYYYMMDDString){
+    return YYYYMMDDString;
+  }
+  YYYYMMDDString = $.trim(YYYYMMDDString);
+  if(YYYYMMDDString.length == 16 || YYYYMMDDString.length == 8){
+    var dt = mocdoc.cal.date_to_dateobject(YYYYMMDDString);
+    dt = mocdoc.cal.formatDDMMYYYY(dt, seperator);
+    var time = YYYYMMDDString.substring(8);
+    return dt + " " + mocdoc.cal.hrs24_to_12_format(time);
+  }else{
+    return YYYYMMDDString;
+  }
+}
+mocdoc.cal.formatHR_Min_to_Hr_Min_Am_Pm = function (time){
+        var hr = parseInt(time.substring(0, 2), 10);
+        var time = (hr==12) ? time +" PM" : hr >12 ? (hr-12) +":" + time.substring(3) + " PM" : time + " AM";
+  return " at " + time;
+}
+mocdoc.cal.formatDate_to_HR_Min = function (DateObj){
+    var hr = DateObj.getHours();
+    var min = DateObj.getMinutes();
+    hr = (hr < 10) ? 0 + "" + hr : hr;
+    min = (min  < 10) ? 0 + "" + min : min;
+return hr + ":" +  min;
+}
+
+
+mocdoc.cal.formatYYYYMMDD = function (dateObj){
+  var mon = dateObj.getMonth()+1;
+  mon = mon<10 ? "0" +  mon : mon;
+  var dt = dateObj.getDate();
+  dt = dt<10 ? "0" +  dt : dt;
+  return dateObj.getFullYear() + "" + mon + "" + dt;
+}
+
+mocdoc.cal.yyyy_mm_dd_hh_mm_ss = function () {
+  now = new Date();
+  year = "" + now.getFullYear();
+  month = "" + (now.getMonth() + 1); if (month.length == 1) { month = "0" + month; }
+  day = "" + now.getDate(); if (day.length == 1) { day = "0" + day; }
+  hour = "" + now.getHours(); if (hour.length == 1) { hour = "0" + hour; }
+  minute = "" + now.getMinutes(); if (minute.length == 1) { minute = "0" + minute; }
+  second = "" + now.getSeconds(); if (second.length == 1) { second = "0" + second; }
+  return year + "" + month + "" + day + "" + hour + ":" + minute + ":" + second;
+}
+
+mocdoc.cal.yyyymmdd_to_day  = function(YyyyMmDd) {
+  var y = YyyyMmDd.substring(0, 4);
+  var m = YyyyMmDd.substring(4,6);
+  var d = YyyyMmDd.substring(6,8);
+  m = parseInt(m, 10) -1;
+   var dt = new Date(y,m,d);
+   return mocdoc.cal.daynum_to_datename(dt.getDay());
+}
+
+mocdoc.cal.formatDDMMYYYYWithSeparator = function (dateObj, separator){
+  var mon = dateObj.getMonth()+1;
+  mon = mon<10 ? "0" +  mon : mon;
+  var dt = dateObj.getDate();
+  dt = dt<10 ? "0" +  dt : dt;
+  return dt + separator + mon + separator + dateObj.getFullYear();
+}
+
+mocdoc.cal.formatYYYYMMDDWithSeparator = function (dateObj, separator){
+  var mon = dateObj.getMonth()+1;
+  mon = mon<10 ? "0" +  mon : mon;
+  var dt = dateObj.getDate();
+  dt = dt<10 ? "0" +  dt : dt;
+  return dateObj.getFullYear() + separator + mon + separator + dt ;
+}
+
+mocdoc.cal.day_to_date = function (days, daterange) {
+   var day;
+   var inclist = [];
+     for (var i =0; i < daterange.length; ++i) {
+        day = mocdoc.cal.yyyymmdd_to_day(daterange[i]);
+     if($.inArray(day, days) > -1) { 
+            inclist.push(daterange[i]);
+     }
+   }
+  return inclist;
+  }
+
+mocdoc.cal.datestr_to_nextdatestr = function (YyyyMmDD, move) {
+  var date = mocdoc.cal.date_to_dateobject(YyyyMmDD);
+  if(!move){
+    move  = 1;
+  }
+  date.setDate(date.getDate() + move);
+  date = mocdoc.cal.formatYYYYMMDD(date);
+ return date; 
+}
+
+mocdoc.cal.date_to_dateobject = function (YyyyMmDD, startIndex) {
+  var dt;
+  if(startIndex & startIndex >= 0){
+    dt = YyyyMmDD.substring(startIndex);
+  }else{
+    dt = YyyyMmDD;
+  }
+  yr = dt.substring(0,4);
+  month = dt.substring(4,6);
+  day = dt.substring(6,8);
+  month = parseInt(month, 10) - 1;
+  day = parseInt(day, 10);
+  yr = parseInt(yr, 10);
+  return new Date(yr, month, day);
+}
+mocdoc.cal.ddmmyyyy_to_yyyymmdd = function (ddmmyyyy, startIndex) {
+  var dt;
+  if(startIndex & startIndex >= 0){
+    dt = ddmmyyyy.substring(startIndex);
+  }else{
+    dt = ddmmyyyy;
+  }
+  yr = dt.substring(6,10);
+  month = dt.substring(3,5);
+  day = dt.substring(0,2);
+  return yr+""+month +"" + day;
+}
+
+mocdoc.cal.checkNotFreeEventsTimeNotInTheRange = function (start, end, notFreeEventsTime){
+  
+  if(notFreeEventsTime){ 
+  for(var i=0; i < notFreeEventsTime.length; ++i){
+    if(end <= notFreeEventsTime[i].start || start >= notFreeEventsTime[i].end) {
+//      alert ("1: " +  start + " " + end + " notFreeEventsTime " + notFreeEventsTime[i].start + " " + notFreeEventsTime[i].end)
+      continue;
+    }else{
+//      alert ("2: " + start + " " + end + " notFreeEventsTime " + notFreeEventsTime[i].start + " " + notFreeEventsTime[i].end)
+      return {newStart: notFreeEventsTime[i].end}
+    }
+  }   
+  }
+  return false;
+    
+}
+
+mocdoc.cal.calculateAge = function(dob){
+  var dobmoment = moment(dob, "DD/MM/YYYY");
+  var visitdatemomemt = moment(new Date(), "DD/MM/YYYY");
+  
+  var ageYear = visitdatemomemt.diff(dobmoment, 'year');
+  dobmoment.add(ageYear, 'years');
+
+  var ageMonth = visitdatemomemt.diff(dobmoment, 'months');
+  dobmoment.add(ageMonth, 'months');
+
+  var ageDate = visitdatemomemt.diff(dobmoment, 'days');
+
+  if (ageYear == 0 && ageMonth == 0){
+    return ageDate + " days";
+  } else{
+    return ageYear + " years " + ageMonth + " months";  
+  } 
+}
+
+
+mocdoc.cal.calculateAgeNum = function(dob){
+  var dobmoment = moment(dob, "DD/MM/YYYY");
+  var visitdatemomemt = moment(new Date(), "DD/MM/YYYY");
+  return visitdatemomemt.diff(dobmoment, "years", "true");
+}
+
+mocdoc.cal.calculateAgeNumbtw = function(dob, visitdate){
+  var dobmoment = moment(dob, "DD/MM/YYYY");
+  var visitdatemomemt = moment(visitdate, "DD/MM/YYYY");
+  return visitdatemomemt.diff(dobmoment, "years", "true");
+  
+}
+
+mocdoc.cal.calculateAgeBtw = function(dob, visitdate){
+  var dobmoment = moment(dob, "DD/MM/YYYY");
+  var visitdatemomemt = moment(visitdate, "DD/MM/YYYY");
+  
+  var ageYear = visitdatemomemt.diff(dobmoment, 'year');
+  dobmoment.add(ageYear, 'years');
+
+  var ageMonth = visitdatemomemt.diff(dobmoment, 'months');
+  dobmoment.add(ageMonth, 'months');
+
+  var ageDate = visitdatemomemt.diff(dobmoment, 'days');
+
+  if (ageYear == 0 && ageMonth == 0){
+    return ageDate + " days";
+  } else{
+    return ageYear + " years " + ageMonth + " months";  
+  }   
+}
+
+mocdoc.cal.calculateAgeBtwSingleField = function(dob, visitdate){
+  var dobmoment = moment(dob, "DD/MM/YYYY");
+  var visitdatemomemt = moment(visitdate, "DD/MM/YYYY");
+  
+  var ageYear = visitdatemomemt.diff(dobmoment, 'year');
+  dobmoment.add(ageYear, 'years');
+
+  var ageMonth = visitdatemomemt.diff(dobmoment, 'months');
+  dobmoment.add(ageMonth, 'months');
+
+  var ageDate = visitdatemomemt.diff(dobmoment, 'days');
+
+  if (ageYear == 0 && ageMonth == 0){
+    return ageDate + " days";
+  } else if (ageYear == 0){
+    return ageMonth + " months"
+  } else {
+    return ageYear + " years";  
+  }   
+}
+
+
+
+mocdoc.cal.patAge = function (dob, patAge, billdate){
+  if (billdate.length > 8){
+    billdate = billdate.substring(0, 8);
+  }
+  var age;
+  var isdobValid = moment(dob).isValid();
+  var isbilldateValid = moment(billdate).isValid();
+  if (isdobValid && isbilldateValid){
+      dob = $.trim(dob);
+      billdate = $.trim(billdate);
+      billdate = billdate.substring(0,8);
+      var age1 = dob >= billdate;
+      dob = mocdoc.cal.date_to_dateobject(dob);
+      var birthday = mocdoc.cal.formatDDMMYYYYWithSeparator(dob,"/");
+      billdate = mocdoc.cal.date_to_dateobject(billdate);
+      billdate = mocdoc.cal.formatDDMMYYYYWithSeparator(billdate,"/");
+      age = mocdoc.cal.calculateAgeBtw(birthday, billdate);
+      if(age1 == true){
+         age = "";
+      }
+      return age;
+    }
+    else if(isdobValid){
+      dob = $.trim(dob);
+      dob = mocdoc.cal.date_to_dateobject(dob);
+      var birthday = mocdoc.cal.formatDDMMYYYYWithSeparator(dob,"/");
+      age = mocdoc.cal.calculateAge(birthday);
+      return age;
+    }
+    else if ((!isNaN (patAge.agey) && patAge.agey != "" && typeof patAge.agey !== "undefined") 
+      || (!isNaN (patAge.agem) && patAge.agem != "" && typeof patAge.agem !== "undefined") 
+      || (!isNaN (patAge.aged) && patAge.aged != "" && typeof patAge.aged !== "undefined"))
+    {
+      var patage = "";
+      var yrCheck = "";
+      if (patAge.agey != 0) {
+        patage = patAge.agey + " years ";
+        yrCheck = "years";
+      } 
+       if (patAge.agem != 0) {
+        patage += patAge.agem + " months ";
+      } 
+       if (patAge.aged != 0 && yrCheck != "years") {
+        patage += patAge.aged + " days";
+      }
+      return patage;
+    }else{
+      return typeof patAge.age === "undefined" || patAge.age == "undefined" ? "" : patAge.age;
+    }
+  }
+
+get_dateclass = function(dt_format){
+  if (dt_format == "DD/MM/YYYY"){
+    return "date";
+  } else if (dt_format == "MM/DD/YYYY"){
+    return "datemmddyyyy";
+  } else if (dt_format == "YYYY/MM/DD"){
+    return "dateyyyymmdd";
+  } else {
+    return;
+  }
+}
+
+checkFutureDate = function(date, today){
+  var D1 = mocdoc.cal.ddmmyyyy_to_yyyymmdd(date);
+//  yr = dt.substring(0,4);
+//  month = parseInt(dt.substring(4,6)) - 1;
+//  day = dt.substring(6,8);
+//    var D1 = new Date(yr, month, day);
+    var diff = D1 - today;
+    if (diff > 0){
+      alert("You have entered a future date. Please correct it");
+      return false;
+    }
+}
+
+chkFor90Days = function(startdate, enddate, daysRange){
+  var startDt = mocdoc.cal.date_to_dateobject(mocdoc.cal.ddmmyyyy_to_yyyymmdd(startdate));
+  var endDt = mocdoc.cal.date_to_dateobject(mocdoc.cal.ddmmyyyy_to_yyyymmdd(enddate));
+  var diff = mocdoc.cal.daysbetween(endDt, startDt);
+  if (diff < 0){
+    return false;
+  } else if (daysRange == "30"){
+        if (diff > 31){
+            alert("Please choose dates within 30 days");
+            return false;
+        }
+  } else if (daysRange == "60"){
+        if (diff > 62){
+            alert("Please choose dates within 60 days");
+            return false;
+        }
+  } else {
+        if (diff > 92){
+            alert("Please choose dates within 90 days");
+            return false;
+        }
+  }
+}
+
+chkForDaysRange = function(startdate, enddate, daysRange){
+  var startDt = mocdoc.cal.date_to_dateobject(mocdoc.cal.ddmmyyyy_to_yyyymmdd(startdate));
+  var endDt = mocdoc.cal.date_to_dateobject(mocdoc.cal.ddmmyyyy_to_yyyymmdd(enddate));
+  var diff = mocdoc.cal.daysbetween(endDt, startDt);
+  if (diff < 0){
+    return false;
+  } else if (daysRange == "30"){
+        if (diff > 31){
+            alert("Please choose dates within 30 days");
+            return false;
+        }
+  } else if (daysRange == "60"){
+        if (diff > 62){
+            alert("Please choose dates within 60 days");
+            return false;
+        }
+  } else if(daysRange == "90") {
+        if (diff > 92){
+            alert("Please choose dates within 90 days");
+            return false;
+        }
+  } else {
+      var daysRangeNum = parseInt(daysRange);
+      if (diff > daysRangeNum){
+        alert("Please choose dates within " + daysRange + " days.");
+        return false;
+      }  
+  }
+}
+
+function getFormattedPartTime(partTime){
+    if (partTime<10)
+       return "0"+partTime;
+    return partTime;
+}
+
+function convertcurrencybyformat(instance, locale, currency){    
+    console.log("case", locale && currency);
+    if(locale && currency){
+        var formatconfig =  { style: 'currency', currency: currency, currencyDisplay: "symbol"};
+        var formatobj = new Intl.NumberFormat(locale, formatconfig);
+        $("."+instance).each(function(){
+            $this = $(this);
+            var amount = parseFloat($this.text()); 
+            if(isNaN(amount)){
+                amount = parseFloat($this.data("amt"));
+            }   
+            if(amount && amount < 0){
+                amount = -1 * amount;
+                amtformatted = (formatobj.format(amount));
+                $this.text("(-)" + amtformatted);
+            }                    
+            else if(amount){
+                $this.text((formatobj.format(amount)))
+            }
+        }) 
+    }    
+    else{
+        $("."+instance).each(function(){
+            $this = $(this);
+            var amount = parseFloat($this.text());    
+            if(amount && amount < 0){
+                amount = -1 * amount;                
+                $this.text("(-)" + amount.toFixed(2));
+            }                    
+            else if(amount){
+                $this.text(amount.toFixed(2))
+            }
+        })
+    }
+}
+
+function convertcurrency_specificloc(amount, locale, currency){             
+    if(locale && currency){
+        var formatconfig =  { style: 'currency', currency: currency, currencyDisplay: "symbol"};
+        var formatobj = new Intl.NumberFormat(locale, formatconfig);        
+        if(amount < 0){
+            amount = -1 * amount;
+            amtformatted = (formatobj.format(amount));
+            return "(-)" + amtformatted;
+        }                    
+        else{
+            return (formatobj.format(amount))
+        }
+    }
+    else{
+         if(amount < 0){
+                amount = -1 * amount;                
+                return "(-)" + amount.toFixed(2);
+            }                    
+            else{
+                return amount.toFixed(2);
+            }
+    }
+}
+
+function convertCurrency_DataTable($rows,classname,locale, currencycode){
+  for (var i = 0; i < $rows.length; i++) {
+       findByCurrency($rows[i], classname, locale, currencycode)
+  }
+}
+
+function findByCurrency($row, classname, locale, currencycode){ 
+    if ($($row).find('.'+classname).length != 0){
+      $($row).find('.'+classname).each(function(){
+        $this = $(this);
+        var amount = parseFloat($this.text());        
+        if(!isNaN(amount)){           
+          $this.text(convertcurrency_specificloc(amount, locale, currencycode));
+        } 
+        else{
+          $this.text(convertcurrency_specificloc(parseFloat(0), locale, currencycode));
+        }     
+    })      
+  
+}
+}
+
+
+
+
+function computeGSTInfo(){
+  var finalval = parseFloat("0.00");
+  $('.cgst').each(function(i, obj) {
+    if ( !isNaN(parseInt($(this).val()))){
+      finalval = finalval + parseFloat($(this).val());
+    }
+  });
+  $("#cgstinfo").text(finalval.toFixed(2));
+  
+  finalval = parseFloat("0.00");
+  $('.sgst').each(function(i, obj) {
+    if ( !isNaN(parseInt($(this).val()))){
+      finalval = finalval + parseFloat($(this).val());
+    }
+  });
+  $("#sgstinfo").text(finalval.toFixed(2));
+  
+  finalval = parseFloat("0.00");
+  $('.utgst').each(function(i, obj) {
+    if ( !isNaN(parseInt($(this).val()))){
+      finalval = finalval + parseFloat($(this).val());
+    }
+  });
+  $("#utgstinfo").text(finalval.toFixed(2));
+  
+  finalval = parseFloat("0.00");
+  $('.igst').each(function(i, obj) {
+    if ( !isNaN(parseInt($(this).val()))){
+      finalval = finalval + parseFloat($(this).val());
+    }
+  });
+  $("#igstinfo").text(finalval.toFixed(2));
+}
+
+
+mocdoc.cal.daysbetween = function( date1, date2 ) {
+    var one_day=1000*60*60*24;
+
+    var date1_ms = date1.getTime();
+    var date2_ms = date2.getTime();
+
+    var difference_ms = date1_ms - date2_ms;
+      
+    return Math.round(difference_ms/one_day); 
+  }
+
+mocdoc.cal.buildNotFreeEventsTime = function (NotFreeHrsJson, ForDate){
+  ForDate = "D" + ForDate;
+  for(var i=0; i < NotFreeHrsJson.length; ++i){
+    if(NotFreeHrsJson[i][ForDate]) {
+      //alert (JSON.stringify(v[ForDate]));
+      return NotFreeHrsJson[i][ForDate];
+    }
+  }
+  return false;
+};
+
+mocdoc.map={};
+
+mocdoc.map.address_mark = function (map, geocoder, markerdata, success_handler, error_handler){
+  geocoder.geocode({'address': markerdata.address}, function(results, status) {
+    if (status == google.maps.GeocoderStatus.OK ){
+      success_handler(map, markerdata, {lat:results[0].geometry.location.lat(), lng: results[0].geometry.location.lng()});
+    }else if(status == google.maps.GeocoderStatus.OVER_QUERY_LIMIT) {
+      mocdoc.map.error_handler(markerdata, status);
+    }else if(status == google.maps.GeocoderStatus.ZERO_RESULTS) {
+      error_handler(markerdata, status);
+    }else{
+      error_handler(markerdata, status);
+    }
+  });
+
+}
+mocdoc.map.success_handler = function (map, markerdata, loc){
+//alert (" latlng=" + JSON.stringify(loc));
+ var marker = new google.maps.Marker({
+      position: new google.maps.LatLng(loc.lat, loc.lng),
+      icon: markerdata.icon,
+      map: map
+    });
+  google.maps.event.addListener(marker, 'click',function() {
+    var infowindow = new google.maps.InfoWindow();
+        infowindow.setContent(markerdata.html.content);
+        infowindow.open(map, marker);
+      });
+  $('#map').data(markerdata.id, marker);
+}
+mocdoc.map.error_handler = function (addr, loc){
+//alert (" error");
+}
+mocdoc.map.pin_address = function(map, geocoder){
+var markers = [];
+$(".micon").each(function (index, obj){
+   var mid = $(this).data("mapid");//.substring(1);
+   var img = $(this).data("img");
+   var addr = $(this).data("addr");
+   var name = $(this).data("name");
+   var direction = "//maps.google.com/maps?hl=en&&z=14&saddr=My%20Location&daddr=" + addr;
+   var markerdata = { 
+              address: addr,
+              icon: 'http://chart.apis.google.com/chart?chst=d_map_pin_letter&chld='+ mid.substring(1) +'|812506|EFFFFF',
+        id: mid,
+              title: name,
+            html: { 
+                content: '<div><img src="' + img + '" height="50px"> <span> '+ name + ' <a title="MocDoc Online Doctor Appointment for ' + name +'" href="' + direction + '"> direction </a></span> <div> '+ addr +' </div> </div>', 
+                popup: true 
+            } 
+          };
+   mocdoc.map.address_mark(map, geocoder, markerdata, mocdoc.map.success_handler, mocdoc.map.error_handler);
+   markers[index] = markerdata;
+});
+  return markers;
+}
+mocdoc.map.prepare_map = function (map, geocoder){
+ $(".micon").on('click', function(){  
+   var mid = $(this).data("mapid");//.substring(1);
+   var img = $(this).data("img");
+   var addr = $(this).data("addr");
+   var name = $(this).data("name"); 
+   try{
+     var direction = "//maps.google.com/maps?hl=en&&z=14&oaddr=My%20Location&daddr=" + addr;
+     var marker = $('#map').data(mid);
+     google.maps.event.trigger(marker, 'click')
+     window.scrollTo(0, 70);
+   }catch(e){}
+ });
+ var markers = setTimeout(function (){mocdoc.map.pin_address(map, geocoder)}, 200);
+ // var styles = [
+ //               {
+ //                 stylers: [
+ //                   { hue: "#62c495" },
+ //                   { saturation: -20 }
+ //                 ]
+ //               }
+ //             ];
+ // map.setOptions({styles: styles});
+ 
+};
+
+mocdoc.map.find_center = function(){
+  var address = "Chennai, Tamil Nadu";
+  var a =  $(".micon").data("addr");
+  if(a) {
+    a = a.substring(a.lastIndexOf(",") +2, a.lastIndexOf("-"));
+    if(a){
+      address = a;
+    }
+  }
+  return address;
+}
+mocdoc.map.mocdoc_center_map = function(){
+  var address = mocdoc.map.find_center();
+  var geocoder = new google.maps.Geocoder();
+  var map;
+  geocoder.geocode( { 'address': address}, function(results, status) {
+          if (status == google.maps.GeocoderStatus.OK) {
+            var myOptions = {
+            zoom: 7,
+            center: results[0].geometry.location,
+            mapTypeId: google.maps.MapTypeId.ROADMAP
+            }
+            map = new google.maps.Map(document.getElementById('map'), myOptions);
+          mocdoc.map.prepare_map(map, geocoder);
+          }
+        });   
+}
+
+mocdoc.map.loadScript  =function (){
+  if (typeof google === 'object' && typeof google.maps === 'object'){
+    mocdoc.map.mocdoc_center_map();
+  }else{
+    var script = document.createElement("script");
+    script.type = "text/javascript";
+    script.src = "//maps.googleapis.com/maps/api/js?key=AIzaSyCOXisyvFALr9UCsD1tMlTrIh5TRzIUcrQ&callback=mocdoc.map.mocdoc_center_map";
+    document.body.appendChild(script);
+  } 
+}
+
+entity = {};
+entity.loc={};
+
+entity.loc.error_handler = function (markerdata, status){
+  $(markerdata.errormodal).modal();
+  $(markerdata.verifiedloc).val("false");
+};
+
+entity.loc.success_handler = function (map, markerdata, loc){
+  $(markerdata.verifiedloc).val("true");
+};
+
+//(function() {
+//    // log all calls to setArray
+//    var proxied = jQuery.ajax;
+//    jQuery.ajax = function() {
+//    if(arguments[0].success){  
+//      $("#cnc-loading").show();
+//      var origThis = this;
+//      var orgisuccess =  arguments[0].success;
+//      var orgierror =  arguments[0].error;
+//      arguments[0].success = function () {
+//        $("#cnc-loading").hide();
+//        orgisuccess.apply(origThis, arguments);
+//      };
+//      arguments[0].error = function (XHR, textStatus, errorThrown) {
+//        $("#cnc-loading").hide();
+//        if(orgierror){orgierror.apply(origThis, arguments)}
+//        else{
+//          if(textStatus == "error"){
+//            alert ("There was an error. Please try after sometime.");
+//          }
+//          
+//        };
+//      };
+//    }  
+//
+//      return proxied.apply(this, arguments);
+//    };
+//})();
+
+function trim_serialize (form){
+  var serializedForm = form.serializeArray();
+  for(var i =0, len = serializedForm.length;i<len;i++){
+      serializedForm[i].value = $.trim(serializedForm[i].value);
+  }
+  return serializedForm = $.param(serializedForm);
+}
+
+// ---------------- START *** AJAX Throttling / Debounce *** -------------------
+
+
+// throttle time in ms
+$.ajaxThrottle = 20000;
+// our AJAX requests
+$.ajaxRequests = {};
+// list of urls allowed to call faster than our debounce throttle
+$.allowedUrls = [];
+
+// Override the send to store our ajax request time and abort ones that are within our throttle time
+jQuery( document ).ajaxSend( function( event, xhr, settings ){
+  // check if this is an allowed url
+
+  // bypass cache machanism
+  if(settings.cache === false){
+    settings.url = settings.url.replace(/&?_=[0-9]*/, '');
+  }
+
+  for( var i = 0; i < $.allowedUrls.length; i++ ){
+    if( settings.url.indexOf( $.allowedUrls[i] ) !== -1 ){
+      return;
+    }
+  }
+  if(typeof History.getRootUrl !== "undefined"){
+    if (settings.url.indexOf(History.getRootUrl()) != -1){
+      settings.url = settings.url.substring(settings.url.indexOf(History.getRootUrl()) + History.getRootUrl().length, settings.url.length);
+      settings.url = "/"+settings.url;
+    }
+  }
+  // we have made this request before and we are posting
+  if( $.ajaxRequests[ settings.url ] != undefined ){
+    // if our request is still pending or the throttle time has not passed then stop the request
+    if( $.ajaxRequests[ settings.url ].responseTime == 0 && ($.ajaxRequests[ settings.url ].requestTime + $.ajaxThrottle) > Date.now() ){
+      xhr.abort();
+      //alert("We are processing your previous request. Please wait...");
+      return false;
+    }
+  }
+  $("#cnc-loading").show();
+  mocdoc.pages.loaderRef= window.setTimeout(clearLoadingImage, 60000);
+  $.ajaxRequests[ settings.url ] = { requestTime: Date.now(), responseTime: 0 };
+});
+
+// Override the complete to store our ajax request completed time
+jQuery( document ).ajaxComplete( function( event, xhr, settings ){
+    window.clearTimeout(mocdoc.pages.loaderRef);
+    $("#cnc-loading").hide();
+  // we get a status code from the server and not aborted from debounce
+  if( xhr.status != 0 && $.ajaxRequests[ settings.url ] != undefined ){
+      setTimeout((function () {
+          delete $.ajaxRequests[settings.url];
+    }), 3000);
+  }
+});
+// ---------------- END *** AJAX Throttling / Debounce *** -------------------
+
+
+$(document).ajaxStart(function(){
+     //$("#cnc-loading").show();
+     //mocdoc.pages.loaderRef= window.setTimeout(clearLoadingImage, 60000);
+   }).ajaxStop(function(){
+       //window.clearTimeout(mocdoc.pages.loaderRef);
+       //$("#cnc-loading").hide();
+   }).ajaxError(function(event, request, settings, exception){
+      //window.clearTimeout(mocdoc.pages.loaderRef);
+       //$("#cnc-loading").hide();
+
+    // if aborted 
+    if (request.status === 0) {
+        return;
+    }
+
+     if(exception == "Unauthorized"){
+       
+       
+     }else if (!settings.error) {
+         var url = settings.url;
+         var startsWithUser = "/user/acc/"; 
+         var startsWithEntity = "/entity/acc/"; 
+         if( (url.indexOf(startsWithUser) >=0 || url.indexOf(startsWithEntity) >=0 ) && url.indexOf("/addimg") >0){
+         }else{
+           alert ("There was an error. Please try after sometime.");
+         }
+       }
+   });
+   
+mocdoc.brokenimgfix = function (image) {
+    image.onerror = "";
+    image.src = "/images/unknownextension.png";
+    return true;
+}
+
+
+function clearLoadingImage(){
+     $("#cnc-loading").hide();
+}
+function getAllState(){
+    url = '/config/allstate';
+    var result;
+    $.ajax({
+        async: false,
+        type: "POST",
+        url: url,
+        dataType: "text",
+        success: function(resp){
+            result = resp;
+         },
+    });
+    return result;
+};
+
+function getAllCity(){
+    url = '/config/allcity';
+    var result;
+    $.ajax({
+        async: false,
+        type: "POST",
+        url: url,
+        dataType: "text",
+        success: function(resp){
+            result = resp;
+         },
+    });
+    return result;
+};
+
+function getAllSpeciality(){
+    url = '/config/allspeciality';
+    var result;
+    $.ajax({
+        async: false,
+        type: "POST",
+        url: url,
+        dataType: "text",
+        success: function(resp){
+            result = resp;
+         },
+    });
+    return result;
+};
+
+function getAllHealthCategory(){
+    url = '/config/allhealthcategory';
+    var result;
+    $.ajax({
+        async: false,
+        type: "POST",
+        url: url,
+        dataType: "text",
+        success: function(resp){
+            result = resp;
+         },
+    });
+    return result;
+};
+
+function computeCurrency(currencyJson, entityLoc, amtRcvd, parentId, dt){
+    var entitylocation = entityLoc;
+    var currencyname = $(parentId+" #currencyname").val();
+    if($(parentId+" input[name='multimode-payment']:checked").val() == "true"){
+        if($(parentId+" #paymenttype1").val() == "Cash"){
+            try{
+                var currencyname1 = $(parentId+" #currencyname1").val();
+                var curr_rate1 = currencyJson["currencyrate"][entitylocation][currencyname1][dt];
+                if(isNaN(curr_rate1)){
+                    $(parentId+" #currencyrate1").val("");
+                    $(parentId+" #currencyamt1").val("0.00");
+                    handleCurrencyError(currencyname1, parentId+" #currencyname1");
+                    return false;
+                }
+                $(parentId+" #currencyrate1").val(curr_rate1);
+                var convAmt1 = parseFloat($(parentId+" #amount1").val()) / parseFloat(curr_rate1);
+                $(parentId+" #currencyamt1").val(parseFloat(convAmt1).toFixed(2));
+            } catch(e) {
+                $(parentId+" #currencyrate1").val("");
+                $(parentId+" #currencyamt1").val("0.00");
+                var selector = parentId+" #currencyname1";
+                handleCurrencyError(currencyname1, selector);
+            }
+        }else{
+            $(parentId+" #currencyrate1").val("");
+            $(parentId+" #currencyamt1").val("0.00");
+        }
+        if($(parentId+" #paymenttype2").val() == "Cash"){
+            try{
+                var currencyname2 = $(parentId+" #currencyname2").val();
+                var curr_rate2 = currencyJson["currencyrate"][entitylocation][currencyname2][dt];
+                if(isNaN(curr_rate2)){
+                    $(parentId+" #currencyrate2").val("");
+                    $(parentId+" #currencyamt2").val("0.00");
+                    handleCurrencyError(currencyname2, parentId+" #currencyname2");
+                    return false;
+                }
+                $(parentId+" #currencyrate2").val(curr_rate2);
+                var convAmt2 = parseFloat($(parentId+" #amount2").val()) / parseFloat(curr_rate2);
+                $(parentId+" #currencyamt2").val(parseFloat(convAmt2).toFixed(2));
+            } catch(e) {
+                $(parentId+" #currencyrate2").val("");
+                $(parentId+" #currencyamt2").val("0.00");
+                var selector = parentId+" #currencyname2";
+                handleCurrencyError(currencyname2, selector);
+            }
+        }else{
+            $(parentId+" #currencyrate2").val("");
+            $(parentId+" #currencyamt2").val("0.00");
+        }
+    }else{
+        if($(parentId+" #paymenttype").val() == "Cash"){
+            try {
+                var curr_rate = currencyJson["currencyrate"][entitylocation][currencyname][dt];
+                if(curr_rate){
+                    var amtRcvd = parseFloat(amtRcvd);
+                    var convAmt = (amtRcvd) / parseFloat(curr_rate);
+                    $(parentId+" #currencyrate").val(curr_rate);
+                    $(parentId+" #currencyamt").val(parseFloat(convAmt).toFixed(2));
+                }else{
+                    $(parentId+" #currencyrate").val("");
+                    $(parentId+" #currencyamt").val("0.00");
+                    var selector = parentId+" #currencyname";
+                    handleCurrencyError(currencyname, selector);
+                }
+            } catch(e) {
+                $(parentId+" #currencyrate").val("");
+                $(parentId+" #currencyamt").val("0.00");
+                var selector = parentId+" #currencyname";
+                handleCurrencyError(currencyname, selector);
+            }
+        }else{
+            $(parentId+" #currencyrate").val("");
+            $(parentId+" #currencyamt").val("0.00");
+        }
+    }
+}
+
+function loadCurrency(loc, entityJSON, parentId, callback){
+    if(!$.isEmptyObject(entityJSON)){
+        var entityLocations = entityJSON["locations"];
+        var locationObj = entityLocations[loc];
+        var currencyAllowed = locationObj["allowed_currency"]||{};
+        var options = "<option></option>";
+        if(!$.isEmptyObject(currencyAllowed)){
+            $.each(currencyAllowed, function(i,e){
+                options += "<option value="+e+">"+e+"</option>";
+            });
+            if($(parentId + " #paymenttype").val() == "Cash"){
+                if($(parentId + " #currencyname").val() == "" || $(parentId + " #currencyname").val() == null){
+                    $(parentId +" #currencyname").html("").append(options);
+                }
+                $(".currencydiv #Cash").showmd();
+            }else{
+                $(".currencydiv #Cash").hidemd();
+            }
+            if($(parentId + " #paymenttype1").val() == "Cash"){
+                if($(parentId + " #currencyname1").val() == "" || $(parentId + " #currencyname1").val() == null){
+                    $(parentId + " #currencyname1").html("").append(options);
+                }
+                $(".currencydiv #Cash1").showmd();
+            }else {
+                $(".currencydiv #Cash1").hidemd();
+            }
+            if($(parentId + " #paymenttype2").val() == "Cash"){
+                if($(parentId + " #currencyname2").val() == "" || $(parentId + " #currencyname2").val() == null){
+                    $(parentId +" #currencyname2").html("").append(options);
+                }
+                $(".currencydiv #Cash2").showmd();
+            }else {
+                $(".currencydiv #Cash2").hidemd();
+            }
+        }else{
+            $(".currencydiv #Cash").hidemd();
+            $(".currencydiv #Cash1").hidemd();
+            $(".currencydiv #Cash2").hidemd();
+        }
+        if(parentId == "master"){
+            $("#currencyname").html("").append(options);
+        }
+        callback();
+    }
+}
+
+function handleCurrencyError(currencyName, selector){
+    if($(selector).val()){
+        bootbox.alert("You need to configure '<b>"+currencyName+"</b>' currency, before using it.", function () {
+            $(selector).val("");
+        });
+    }else{
+        $(selector).val("");
+    }
+}
+
+function selectCurrency(parentId, currencyName, currencyName1, currencyName2) {
+    if(currencyName[0] != "undefined" && currencyName[0] != "")
+        $(parentId +" #currencyname").val(currencyName[0]);
+        $(parentId +" #currencyamt").val(currencyName[1]);
+        $(parentId +" #currencyrate").val(currencyName[2]);
+    if(currencyName1[0] != "undefined" && currencyName1[0] != "")
+        $(parentId +" #currencyname1").val(currencyName1[0]);
+        $(parentId +" #currencyamt1").val(currencyName1[1]);
+        $(parentId +" #currencyrate1").val(currencyName1[2]);
+    if(currencyName2[0] != "undefined" && currencyName2[0] != "")
+        $(parentId +" #currencyname2").val(currencyName2[0]);
+        $(parentId +" #currencyamt2").val(currencyName2[1]);
+        $(parentId +" #currencyrate2").val(currencyName2[2]);
+}
+
+mocdoc.currency2text = function(value, currency, coin, lakh_or_milllion){
+    var fraction = Math.round((value % 1)*100);
+    var f_text  = "";
+    if (lakh_or_milllion == "MILLION"){
+      var word = convert_dollar_number(value);
+      var fractionword = convert_dollar_number(fraction)
+  } else {
+    var word = convert_number(value);
+    var fractionword = convert_number(fraction)
+  }
+    if(fraction > 0) {
+        f_text = "AND "+fractionword+" "+coin;
+    }
+    if (word == "NUMBER OUT OF RANGE!"){
+      return "";
+    } else {
+      return currency+" "+word+" "+f_text+" ONLY";  
+    }
+}
+
+
+mocdoc.rupees2text = function(value){
+    var fraction = Math.round((value % 1)*100);
+    var f_text  = "";
+
+    if(fraction > 0) {
+        f_text = "AND "+convert_number(fraction)+" "+coin;
+    }
+    var word = convert_number(value);
+    if (word == "NUMBER OUT OF RANGE!"){
+      return "";
+    } else {
+      return currency+" "+word+" "+f_text+" ONLY";  
+    }
+}
+
+function convert_number(number){
+    if ((number < 0) || (number > 999999999)){ 
+        return "NUMBER OUT OF RANGE!";
+    }
+    var Gn = Math.floor(number / 10000000);  /* Crore */ 
+    number -= Gn * 10000000; 
+    var kn = Math.floor(number / 100000);     /* lakhs */ 
+    number -= kn * 100000; 
+    var Hn = Math.floor(number / 1000);      /* thousand */ 
+    number -= Hn * 1000; 
+    var Dn = Math.floor(number / 100);       /* Tens (deca) */ 
+    number = number % 100;               /* Ones */ 
+    var tn= Math.floor(number / 10); 
+    var one=Math.floor(number % 10); 
+    var res = ""; 
+
+    if (Gn>0){ 
+        res += (convert_number(Gn) + " CRORE"); 
+    } 
+    if (kn>0){ 
+        res += (((res=="") ? "" : " ") + 
+        convert_number(kn) + " LAKH"); 
+    } 
+    if (Hn>0){ 
+        res += (((res=="") ? "" : " ") +
+        convert_number(Hn) + " THOUSAND"); 
+    } 
+
+    if (Dn){ 
+        res += (((res=="") ? "" : " ") + 
+        convert_number(Dn) + " HUNDRED"); 
+    } 
+
+
+    var ones = Array("", "ONE", "TWO", "THREE", "FOUR", "FIVE", "SIX","SEVEN", "EIGHT", "NINE", "TEN", "ELEVEN", "TWELVE", "THIRTEEN","FOURTEEN", "FIFTEEN", "SIXTEEN", "SEVENTEEN", "EIGHTEEN","NINETEEN"); 
+  var tens = Array("", "", "TWENTY", "THIRTY", "FORTY", "FIFTY", "SIXTY","SEVENTY", "EIGHTY", "NINETY"); 
+
+    if (tn>0 || one>0){ 
+        if (!(res=="")){ 
+            res += " AND "; 
+        } 
+        if (tn < 2){ 
+            res += ones[tn * 10 + one]; 
+        } else { 
+            res += tens[tn];
+            if (one>0){ 
+                res += ("-" + ones[one]); 
+            } 
+        } 
+    }
+
+    if (res==""){ 
+        res = "ZERO"; 
+    } 
+    return res;
+}
+
+
+function convert_dollar_number(number){
+    if ((number < 0) || (number > 9999999999)){ 
+        return "NUMBER OUT OF RANGE!";
+    }
+    var Gn = Math.floor(number / 1000000000);  /* Billion */ 
+    number -= Gn * 1000000000; 
+    var kn = Math.floor(number / 1000000);     /* Million */ 
+    number -= kn * 1000000; 
+    var Hn = Math.floor(number / 1000);      /* thousand */ 
+    number -= Hn * 1000; 
+    var Dn = Math.floor(number / 100);       /* Tens (deca) */ 
+    number = number % 100;               /* Ones */ 
+    var tn= Math.floor(number / 10); 
+    var one=Math.floor(number % 10); 
+    var res = ""; 
+
+    if (Gn>0){ 
+        res += (convert_dollar_number(Gn) + " BILLION"); 
+    } 
+    if (kn>0){ 
+        res += (((res=="") ? "" : " ") + 
+          convert_dollar_number(kn) + " MILLION"); 
+    } 
+    if (Hn>0){ 
+        res += (((res=="") ? "" : " ") +
+          convert_dollar_number(Hn) + " THOUSAND"); 
+    } 
+
+    if (Dn){ 
+        res += (((res=="") ? "" : " ") + 
+          convert_dollar_number(Dn) + " HUNDRED"); 
+    } 
+
+    var ones = Array("", "ONE", "TWO", "THREE", "FOUR", "FIVE", "SIX","SEVEN", "EIGHT", "NINE", "TEN", "ELEVEN", "TWELVE", "THIRTEEN","FOURTEEN", "FIFTEEN", "SIXTEEN", "SEVENTEEN", "EIGHTEEN","NINETEEN"); 
+  var tens = Array("", "", "TWENTY", "THIRTY", "FORTY", "FIFTY", "SIXTY","SEVENTY", "EIGHTY", "NINETY"); 
+
+    if (tn>0 || one>0){ 
+        if (!(res=="")){ 
+            res += " AND "; 
+        } 
+        if (tn < 2){ 
+            res += ones[tn * 10 + one]; 
+        } else { 
+            res += tens[tn];
+            if (one>0){ 
+                res += ("-" + ones[one]); 
+            } 
+        } 
+    }
+
+    if (res==""){ 
+        res = "ZERO"; 
+    } 
+    return res;
+}
+
+function isValidDate(val) {
+    var regExp = /(?:0[1-9]|[12][0-9]|3[01])\/(?:0[1-9]|1[0-2])\/(?:19|20\d{2})$/;
+    return regExp.test(val);
+};
+
+function isValidDate_yyyymmdd(val) {
+    var regExp = /(?:19|20\d{2})(?:0[1-9]|1[0-2])(?:0[1-9]|[12][0-9]|3[01])$/;
+    return regExp.test(val);
+};
+
+
+
+function isValidTime(val) {
+    var regExp = /(?:0[0-9]|[1][0-9]|2[0-3])\:(?:0[0-9]|[1-5][0-9])\:(?:0[0-9]|[1-5][0-9])$/;
+    return regExp.test(val);
+};
+
+ function validate_time(field){
+   var fieldObj = $("input[name='" + field + "']");
+   var str = fieldObj.val();
+   var pattern = /^\d{2}:\d{2}$/;
+   var r = pattern.test(str);
+   var len = fieldObj.parent().find(".error").length;
+   if(r == false){
+     if (len == 0){
+     fieldObj.parent().append("<span class='error' style='font-size:14px'> Time is 24hrs format (ex. 13:30), please correct it.</span>");
+     }
+   }else{
+     if (len > 0){
+       fieldObj.parent().find(".error").remove();
+     }
+   }
+  return r; 
+}
+
+(function( $ ) {
+    $.fn.hidemd = function() {
+        return this.each(function() {
+          $(this).addClass("hide");
+        });
+    };
+    $.fn.showmd = function() {
+        return this.each(function() {
+          $(this).removeClass("hide").removeClass("hidden").css("display", "block");
+        });
+    };
+}( jQuery ));
+
+function isValidNum(event, $this){
+  if(event.which != 8 && event.which != 0 && (event.which < 48 || event.which > 57) && (event.which != 46 || $this.val().indexOf('.') != -1)){
+    return false;
+  }
+}
+
+//alphanumericSymbol validater
+function isValidAlphaNumericSymbol(event, $this){
+  return !(event.which != 8 && event.which != 0 && ( event.which < 48 || event.which > 57 ) && ( event.which < 96 || event.which > 122 )&& ( event.which < 65 || event.which > 90 ) && (event.which != 46) && (event.which != 95) && (event.which != 32) && (event.which != 45)) ;
+}
+
+function isValidInt(val){
+  var intRegex = /^\d+$/;
+  if(intRegex.test(val)){ 
+    return true;
+  } else {
+    return false;
+  }
+}
+
+function calculateBMI(height, weight){
+  var ht = $.trim(height);
+  var wt = $.trim(weight);
+  if (ht == "" || wt == ""){
+    var bmi = ""
+  } else {
+    var ht1 = parseFloat(ht, 10);
+    var wt1 = parseFloat(wt, 10);
+    htinmeter = ht/100;
+    var bmi = wt1/(htinmeter*htinmeter);
+    bmi = bmi.toFixed(2);
+    bmi = bmi > 0 ? bmi : "";   
+  }
+  return bmi
+}
+
+function isValidCharacter(id, regexp, alertmsg){
+     $(id).keypress(function(e){
+       if (e.which !== 0 && e.charCode !== 0 && !e.ctrlKey && !e.metaKey && !e.altKey) {
+         var key = String.fromCharCode(e.keyCode|e.charCode);
+         if(key.search(regexp) == 0){
+           return;
+         }
+         else{
+           alert(alertmsg);
+           return false;
+         }
+       }
+      });
+      $(id).bind("paste",function(e) {
+          var str = e.originalEvent.clipboardData.getData('text');
+          if (str.search(regexp) == -1) {
+            alert(alertmsg);
+            return false;
+          }
+        });
+}
+
+//allowed symbol 0-120 (any string)
+function isValidAge(val0){
+    var val = parseInt(val0);
+    if( isValidInt(val) && (val > -1 && val < 120) ){
+      return true;
+    }
+    return false;
+}
+
+function check_uniqueid(val){
+        var re = new RegExp(/^[a-z0-9]+$/);
+        var uniq1 = val.slice(-1);
+        if (re.test(uniq1)) {
+            var char1 = val.charAt(0);
+            if (re.test(char1)) {
+                return val;
+            }else{
+                var uniqueid22 = val.substring(1);
+                return check_uniqueid(uniqueid22);
+            }
+        }else{
+            var uniqueid11 = val.slice(0, val.length-1);
+            return check_uniqueid(uniqueid11);
+        }
+}
+
+//allowed symbol - a-z A-Z 0-9 ( ) % _ . space / - + & '
+function isValidName(val){
+    var regExp = /^[a-zA-Z0-9\(\)%_\. \/\-\+\&\']+$/;
+    return regExp.test(val);
+}
+//allowed symbol - a-z A-Z 0-9 ( ) _ . space - 
+function isValidName2(val){
+    var regExp = /^[a-zA-Z0-9\(\)_\. \-]+$/;
+    return regExp.test(val);
+}
+//allowed symbol - a-z A-Z 0-9 ( ) % _ . space / - + &
+function isValidString(val){
+    var regExp = /^[a-zA-Z0-9\(\)%_\. \/\-\+\&]+$/;
+    return regExp.test(val);
+}
+//allowed symbol - a-z A-Z 0-9 ( ) _ . space - +
+function isValidwithString(val){
+    var regExp = /^[\u0600-\u06FF\u0750-\u077Fa-zA-Z0-9\(\)_\. \-\+]+$/;
+    return regExp.test(val);
+  }
+//allowed symbol - a-z A-Z 0-9 ( ) % _ , . space / - +
+function isValidStringWithComma(val){
+    var regExp = /^[a-zA-Z0-9\(\)%_,\. \/\-\+]+$/;
+    return regExp.test(val);
+}
+//allowed symbol - a-z A-Z 0-9 ( ) % _  . space / - + < >
+function isValidStringWithLesserGreaterThan(val){
+    var regExp = /^[a-zA-Z0-9\(\)%_,\. \/\-\+]+$/;
+    return regExp.test(val);
+}
+//allowed symbol - a-z A-z 0-9 _(or)- a-z A-z 0-9
+function isValidUserId(val){
+  var regExp = /^[a-zA-Z0-9]+([_-]?[a-zA-Z0-9])*$/
+  return regExp.test(val);
+}
+
+//allowed symbol - a-z A-Z 0-9
+function isValidAlphaNumeric(val){
+    var regExp = /^[a-zA-Z0-9]+$/;
+    return regExp.test(val);
+}
+//allowed symbol - a-z A-Z 0-9 _ - space / \
+function isValidAlphaNumericSpace(val){
+    var regExp = /^[a-zA-Z0-9_\- \/\\]+$/;
+    return regExp.test(val);
+}
+//allowed symbol - a-z A-Z 0-9 - _
+function isValidStringHyphenUnderscore(val){
+    var regExp = /^[a-zA-Z0-9\-_]+$/;
+    return regExp.test(val);
+}
+// --contact nos allow comma, plust, hiphen -------------- //
+function isValidContactNumber(val){
+  var regExp =/^[0-9\-\+\, ]+$/;
+  return regExp.test(val);
+}
+// ----- string with special characters except single quote and double quotes -- //
+function isValidStringwithSpecialChar(val){
+  var regExp = /^[^'"]*$/;
+  return regExp.test(val);
+}
+
+//allowed symbol - 1 1.1 1.00
+function isValidIntorFloat(val){
+    var regExp = /^\d+(\.\d{1,2})?$/;
+    return regExp.test(val);
+}
+//allowed symbol - 1 1.1 1.00 -1 -1.1 -1.00
+function isValidIntorFloatSignOrUnsign(val){
+    var regExp = /^-?\d+(\.\d{1,2})?$/;
+    return regExp.test(val);
+}
+
+function isValidQty(sel, e){
+  var character = String.fromCharCode(e.keyCode);
+  var oldVal = sel.val();
+  var newVal = oldVal + character;  
+  var regexpattern = /^[0-9]*(\.[0-9]{0,2})?$/;
+  if(!regexpattern.test(newVal)){
+    e.preventDefault();
+  return false;
+  }
+}
+
+function isFutureDate(date, today){
+  var D1 = mocdoc.cal.ddmmyyyy_to_yyyymmdd(date);
+  var diff = D1 - today;
+  if (diff > 0){
+      return false;
+  }
+}
+
+
+function get_date(){
+   var dt = $.trim($('#dboard-dt').text());
+    return mocdoc.cal.ddmmyyyy_to_yyyymmdd(dt)
+}
+
+function load_error_modal(obj){
+  modalhtml ="<div id='md-error-alert-modal' class='modal fade'>"+
+              "<div class='modal-dialog modal-sm'>"+
+                "<div class='modal-content'>"+
+                  "<div class='modal-header md-error-alert-modal-header alert bg-md-default'>"+
+                    "<span id='md-modal-alert-title'></span></div>"+
+                  "<div class='modal-body md-error-alert-modal-body'>"+
+                    "<span id='md-error-alert-modal-body-msg'></span>"+
+                  "</div><div class='modal-footer md-error-alert-modal-footer'>"+
+                    "<a href='#' class='btn btn-default close' data-dismiss='modal'>Ok</a>"+
+                  "</div>"+
+              "</div>"+
+          "</div>"+
+          "</div>";
+  $(obj).append(modalhtml);
+}
+
+function error_modal(divobj,title,msg){
+   
+      if ($("#md-error-alert-modal").length==0){
+       load_error_modal(divobj);  
+      }
+      $("#md-modal-alert-title").text(title);
+      $("#md-error-alert-modal-body-msg").text(msg);
+      $("#md-error-alert-modal").modal('show');
+}
+
+function add_info(obj,msg){
+  $(obj).append("<a tabindex='0' data-toggle='tooltip' class='md-note-info'  data-trigger='focus' data-container='.md-note-info-width' data-placement='bottom' ><i class='fa fa-2x fa-info-circle' style='color:#32c2b2;'></i></a>");
+  $('.md-note-info').popover({content:msg}); 
+}
+function add_info(obj,title,msg){
+  var str="<a tabindex='0' data-toggle='tooltip' title='"+ title+"' class='md-note-info'  data-trigger='focus'"+
+   "data-container='.md-note-info-width' data-placement='bottom' >"+
+   "<i class='fa fa-2x fa-info-circle' style='color:#32c2b2;'></i></a>"
+  $(obj).append(str);
+  $('.md-note-info').popover({content:msg,html:true}); 
+}
+
+function add_help(obj,msg){
+    $(obj).append("<a tabindex='0' data-toggle='popover' class='md-note-help'  data-trigger='focus' data-container='.md-note-help-width' data-placement='bottom' ><i class='fa fa-question-circle' style='color:#32c2b2;font-size:'></i></a>");
+    $('.md-note-help').popover({content:msg});
+}
+function add_help(obj,title,msg){
+    var str="<a tabindex='0' data-toggle='popover' title='"+ title+"' class='md-note-help'  data-trigger='focus'"+
+        "data-container='.md-note-help-width' data-placement='bottom' >"+
+        "<i class='fa fa-question-circle' style='color:#32c2b2;font-size: 18px'></i></a>"
+    $(obj).append(str);
+    $('.md-note-help').popover({content:msg,html:true});
+}
+
+//Fix for Bootstrap menu not collapsing in mobile
+$(document).on('click','.navbar-collapse.in',function(e) {
+  if($(e.target).is('a')){$(this).collapse('hide');}
+});
+
+$(document).on('click','#subnav .submenu',function(e) {
+  $(".submenu").removeClass("active");
+  $(this).addClass("active");
+});
+
+// prevent entering double quotes in desc_remarks 
+$(document).on("keypress", "#disc_remark", function(e){
+   var code = e.keyCode || e.which;
+   if(code == 34)
+      e.preventDefault();
+});
+$(document).on("keyup", "#disc_remark", function(e){
+      $("#disc_error").remove();
+      $(".error-highlight").removeClass("error-highlight");
+      var disc = $("#disc_remark").val();
+      if(!isValidwithString(disc) && disc != "" ){
+        $("<label id='disc_error' class='error'>Please enter correct Value</label>" ).insertBefore("#discremarkerror");
+        $("#disc_remark").addClass("error-highlight");
+        $("#disc_remark").focus();
+      } 
+});
+
+//prevent table-menu outside Scroll table
+$(document).off('click', '.table-scroll .col-sm-12 [data-toggle="dropdown"] , .table-scrollnorm [data-toggle="dropdown"]').on('click', '.table-scroll .col-sm-12 [data-toggle="dropdown"] , .table-scrollnorm [data-toggle="dropdown"]', function () {
+        var $buttonGroup = $(this).parent();
+        var ts = +new Date;
+        $(this).siblings('ul').hide();
+        var $ul = $(this).siblings('ul').removeClass("dropdown-menu").removeClass(" dropdown-menu-right").clone(true, true);
+        if (!$buttonGroup.hasClass('open')) {
+            $('.dropdown-menu[data-parent]').css('display', 'none');
+            return;
+        }
+        $ul.attr('data-parent', ts).addClass("dropdown-menu").addClass("dropdown-menu-right");
+        $buttonGroup.attr('data-attachedUl', ts);
+        dropDownFixPosition($buttonGroup, $ul);
+    });
+
+$(document).off("click.myevent").on({'click.myevent': function () {
+    $('.dropdown-menu[data-parent]').remove();
+}});
+
+function dropDownFixPosition(button, dropdown) {
+    $('.dropdown-menu[data-parent]').remove();
+    var dropDownTop = button.offset().top + button.outerHeight();
+    dropdown.css('top', dropDownTop + "px");
+    dropdown.css('left', "auto");
+    dropdown.css('position', "absolute");
+    var dropdownRight = ($(window).width() - (button.offset().left + button.outerWidth()));
+    dropdown.css('right', dropdownRight + "px");
+    dropdown.css('width', "auto");
+    dropdown.css('display', 'block');
+    dropdown.appendTo('body');
+}
+
+function scrolldataprev(){
+$(".table-scroll div.col-sm-12").bind("scroll", function(e) {
+    $('.dropdown-menu[data-parent]').hide();
+  });
+}
+function scrollnormtableprev(){
+  $('.table-scrollnorm').on('scroll', function() {
+        $('.dropdown-menu[data-parent]').hide();
+        });
+}
+function discremark_validation(){
+    if($('#disc_remark').is(':visible')){
+      if($.trim($('#disc_remark').val()) == "") { 
+          if($("#disc_remark").closest(".twitter-typeahead").length == 0){
+            var choose = "#disc_remark"; 
+          }else{
+            var choose = $("#disc_remark").closest(".twitter-typeahead")[0];
+          }
+          $("<label id='discremarkerror' class='error'>Please enter discount remarks</label>" ).insertBefore(choose);   
+          $("#disc_remark").addClass("error-highlight");
+          $("#disc_remark").focus();
+          $(this).button('reset');
+          return false;
+      }
+      var disc = $("#disc_remark").val();
+      $("#disc_error").remove();
+      if(!isValidwithString(disc) && disc != "" ){
+        $("<label id='disc_error' class='error'>Please enter correct Value</label>" ).insertBefore("#discremarkerror");
+        return false;
+      }
+    }
+    if  ($('#disc_authorised_by').is(':visible') && $.trim($('#disc_authorised_by').val()) == "") {  
+        $("<label id='disc_authorisedby' class='error'>Please enter discount Authorizer</label>" ).insertBefore("#disc_authorised_by");
+        $("#disc_authorised_by").addClass("error-highlight");
+        $("#disc_authorised_by").focus();
+        $(this).button('reset');
+        return false;
+    }
+}
+
+function validateMaxCash(multimode, amtreceivedid, parentid, maxcashamt){
+    var cashamt = 0;
+    if(multimode == "true"){
+      if($(parentid + "#paymenttype1").val() == "Cash"){
+        cashamt = parseFloat($.trim($(parentid + "#amount1").val()));
+      }else if($(parentid + "#paymenttype2").val() == "Cash"){
+        cashamt = parseFloat($.trim($(parentid + "#amount2").val()));
+      }
+    }else{
+      if($(parentid + "#paymenttype").val() == "Cash"){
+        cashamt = parseFloat($.trim($(parentid + amtreceivedid).val()));
+      }
+    }
+    if(!isNaN(cashamt)){
+      if(cashamt > maxcashamt){
+        return false;
+      }
+    }  
+}
+
+function linkmaster(linkid, url, title) {
+      $("#"+linkid).attr("title", title); 
+      var linkref ="<a href="+url+" class='ms-ajax hide' data-md-target='#cbody'>Master</a>";
+      $("#"+linkid).append(linkref);
+}
+
+//--------fullscreen Overlay close and open listener
+$(document).off("click",".md-overlay-closebtn").on("click",".md-overlay-closebtn",function(e){
+  e.preventDefault();
+    $(this).closest(".md-overlay").css("height","0");
+    var currentobj = $(this);
+    setTimeout(function(){  
+      $("body").removeClass("md-overlay-open");
+      $(currentobj).closest(".md-overlay-header").css("position","");
+    },400);
+
+});
+
+function showfullscreenoverlay(options){
+  var data = get_data(options);
+  var url  = get_url(options);
+  var id   = get_id(options);
+  $.get( url,data,function(res){
+    $("#"+id+" .md-overlay-content").html(res);
+    $("body").addClass("md-overlay-open");
+    $("#"+id+" .md-overlay-header").css("position","fixed");
+    $("#"+id).css("height","100%");
+  })
+}
+
+function get_patient_name_with_title(patient){
+    var title = (typeof patient.title !== "undefined" && patient.title != null && $.trim(patient.title) != "")?$.trim(patient.title):"";
+    var fname = (typeof patient.name !== "undefined" && patient.name != null && $.trim(patient.name) != "")?$.trim(patient.name):"";
+    var lname = (typeof patient.lname !== "undefined" && patient.lname != null && $.trim(patient.lname) != "")?$.trim(patient.lname):"";
+    var name = "";
+    if (title != ""){
+       name = title + "." + fname + " " + lname;
+    } else {
+        name = fname + " " + lname;
+    }
+    return $.trim(name);
+}
+
+function get_data(options){
+  var data = options["data"];
+  if(data){
+
+  }else{
+    data={};
+  }
+  return data;
+}
+
+function get_url(options){
+  var url = options["url"];
+  return url;
+}
+
+function get_id(options){
+  var id = options["id"];
+  return id;
+}
+
+function get_country_class(digits){
+  return "mobile"+digits;
+}
+
+function get_doctor_display_name(displayName, docObj){
+  var doctorName = "";
+  if(displayName == "Education"){
+    doctorName = docObj.namewithedu
+  } else if(displayName == "Speciality"){
+    doctorName = docObj.namewithspeciality
+  } else if(displayName == "Both"){
+    doctorName = docObj.both    
+  } else if(displayName == "None"){
+    doctorName = docObj.name
+  } else {
+    doctorName = docObj.namewithedu
+  }
+  return doctorName;
+}
+
+function get_language_data(lang){
+  var language = {};
+  switch(lang){
+    case "en":
+      language = window.languagecode_en;
+      break;
+    case "ta":
+      language = window.languagecode_ta;
+      break;
+    case "ar":
+      language = window.languagecode_ar;
+      break;
+    default:
+      language = {};
+  }
+  return language;
+}
+
+function translate_to_local(items, languageJson){
+  var lang_obj = languageJson;
+    $.each(items, function(){
+        $t = $(this);
+        var lable_key = $t.data("i18n");
+        var lable_type = $t.data("i18ntype");
+
+        var loclang = lang_obj[lable_key]
+        var msg = validate_message(lable_key, loclang);
+        if(msg != lable_key){
+            if(lable_type == "placeholder"){
+              $t.attr("placeholder", msg);
+            } if(lable_type == "button"){
+              $t.val(msg);
+            } else {
+              $t.text(msg);
+            }
+        }
+    });
+}
+
+function validate_message(lable_key, loclang){
+    var defaultMsg = lable_key;
+    if(defaultMsg === loclang){
+        return lable_key;
+    }else{
+        return loclang;
+    }
+}

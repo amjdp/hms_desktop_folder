@@ -1,0 +1,25 @@
+/*--------------------------------------------*/
+		/*- TESTIMONIALS JQUERY ----------------------*/
+		/*--------------------------------------------*/
+
+	jQuery(document).ready(function(){	
+		jQuery(".testimonials-content-widget .auto-slide").each(function(){
+			var parent = jQuery(this).parent().children(".testimonials-container");
+			var interval = (jQuery(this).text()*1000);
+			if(jQuery(this).text() == '' || jQuery(this).text() == 0)
+				return false;
+
+			testimonial_slide = setInterval(function(){
+				var current = parent.children(".testimonial-item.active").index();
+				var max = parent.children(".testimonial-item").size();
+				if(max > 1) {
+					var next = (current+1);
+					if(max == next){ var next = 0; }
+					parent.children(".testimonial-item.active").slideUp().removeClass("active");
+					parent.children(".testimonial-item").eq(next).slideDown().addClass("active");
+				}
+			}, interval);
+		});
+		
+		
+    });

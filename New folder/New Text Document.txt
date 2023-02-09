@@ -1,0 +1,70 @@
+--------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+
+Modules in Online hospital management System
+____________________________________
+
+Admin Module: Admin will have coverage over the whole application he can perform every operation on the data. There are mainly four features on the home page the first will show the home option second is about the option which will show the details of the hospital.
+
+The third will show the contact details and the fourth is the login for doctors, patients, receptionists,s and Hr accounts. So will log in through the admin account where we can see the total number of patients, doctors and even see the total number of active doctors.
+
+When we click on view doctor it shows the details of doctors like full name, contact, email, gender, address, status(active or inactive), and action or updation, deletion can be performed by the admin user. Then when we will select a particular doctor it will show their month, year, attendance, salary. Admin can also view patients’ details and can update them. Receptionist details and new receptionist can also be added and viewed.
+
+The accounting feature will include patient account details like payment history, due amount, and the total amount, and doctor account details will include the doctor’s name their attendance, salary, and last month’s date when they got their salary. Admin can add doctor salary and attendance by filling in the doctor’s name, month, year, the number of attendance, and salary.
+
+Patients Module – The patient will create an account using an email id then signup again using email and password. There profile for a patient will include his personal data like name, contact number, age, blood group, address, gender, photograph. The profile can also be updated again by the patient. the n medical history will include the prescription given by the doctor.
+
+The payment feature shows the hospital bill and mode of transaction. The appointment feature allows you to make an appointment with the doctors. The patient can select doctors according to their medical issues and doctor’s specialization.
+
+Doctor module – As we log in through the doctor account, there will be a profile that shows your name, photograph, email, contact number, qualifications, age, gender. a doctor can also update their profile. Prescriptions are added by the doctors to particular patients and they view appointment dates.
+
+Receptionist – Create an account for the receptionist. A receptionist can see new appointments, total appointments, and completed appointments. when we can see the new appointment the receptionist will add the date, time and assign the status. complete appointment will show all the appointments selected and rejected. Receptionists can also add patients’ accounts or can delete accounts. An appointment can also be added.
+
+
+-------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+
+Objectives of E-commerce Project
+__________________________
+
+The main object to build a secured, robust e-commerce store It maintains all the records related to the product and also keeps a record of user previous experience for further enhancement.
+
+Modules in Online e-commerce Store System
+Admin Login: this module will allow Admin to log in to the system and manage the system and its functions.
+
+User Login: This module will allow users to log in to the system using their name and contact number
+
+Category: in this module, we categorized all types of products like clothes, electrical, footwear, etc
+
+Name: this module will allow the admin and users to check the product name
+
+Availability: admin is responsible to check whether the particular product is available in stock or not
+
+Price range: different products have a relative price range which is managed by Admin only
+
+Details of user: details of users who register themselves, this module will contain Name, Contact, Number, Address will be managed
+
+Sold Quantity: this module will have information about a particular product and how many people have chosen it
+
+User Roles
+Two users can interact with this application
+Admin
+User
+
+Working of admin ADMIN user
+
+Can log in and out of the system
+Admin can manipulate the data about the product like delete, edit
+Can view/edit/delete category of products accordingly
+Admin can view/confirm/cancel an order placed by the user
+Can change the price of the product
+Can check payment done by the user
+Can manage “my profile”
+Working of en USER
+
+Can log in/out of the system
+Can manage the profile
+Search product
+Can add any product to your wishlist
+Can make an order or cancel the ordered product
+Can change password
+Can update cart item
+Can make online payment
